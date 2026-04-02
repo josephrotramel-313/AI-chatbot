@@ -13,6 +13,7 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(join(__dirname, "public")));
 
+
 const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_AI_API_KEY });
 
 // Map OpenAI-style messages to Gemini contents: { role: "user"|"model", parts: [{ text }] }
@@ -64,3 +65,4 @@ server.on("error", (err) => {
   }
   throw err;
 });
+

@@ -28,5 +28,6 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: ./Dockerfile
           push: true
           tags: your-dockerhub-username/your-image-name:latest

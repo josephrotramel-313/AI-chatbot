@@ -2,7 +2,6 @@ name: Rebuild Docker Image
 
 on:
   workflow_dispatch:
-
   push:
     branches:
       - main
@@ -28,6 +27,6 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./Dockerfile
+          file: ./Dockerfile     # explicitly tell it where the Dockerfile is
           push: true
           tags: your-dockerhub-username/your-image-name:latest

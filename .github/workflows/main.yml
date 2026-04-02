@@ -29,4 +29,4 @@ jobs:
           context: .
           file: ./Dockerfile     # explicitly tell it where the Dockerfile is
           push: true
-          tags: your-dockerhub-username/your-image-name:latest
+          tags: josephthe313/ai-chatbot:latest

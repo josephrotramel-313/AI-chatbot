@@ -1,32 +1,143 @@
-name: Rebuild Docker Image
+# ─────────────────────────────────────────────────────────────────────────────
+# DEPLOY TEMPLATE  —  copy this file, rename it, and fill in the
+# four variables in the "CONFIGURE HERE" block below. That's it.
+#
+# Required GitHub secrets (Settings → Secrets and variables → Actions):
+#   • VPS_HOST        — VPS IP or hostname (e.g. 123.45.67.89)
+#   • VPS_USER        — non-root deploy user (e.g. deploy)
+#   • VPS_SSH_KEY     — unencrypted private SSH key (no passphrase)
+#                       Generate: ssh-keygen -t ed25519 -f deploy_key -N ""
+#                       Add deploy_key.pub → ~/.ssh/authorized_keys on VPS
+#                       Store contents of deploy_key as this secret.
+#   • VPS_PORT        — optional, defaults to 22
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Deploy <<<APP_NAME>>> to Hostinger  # e.g. "Deploy MyApp to Hostinger"
 
 on:
-  workflow_dispatch:
   push:
     branches:
       - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-<<<APP_NAME>>>            # e.g. deploy-myapp  (must be unique per app)
+  cancel-in-progress: false
 
 jobs:
-  build:
+  deploy:
+    name: SSH deploy to VPS
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Show runner public IP
+        run: |
+          ip=$(curl -fsS --max-time 5 https://api.ipify.org || echo "unknown")
+          echo "Runner public IP: $ip"
+          echo "::notice title=Runner IP::$ip"
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Verify required secrets are present
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          missing=0
+          if [ -z "$VPS_HOST" ];    then echo "::error::VPS_HOST secret is empty";    missing=1; fi
+          if [ -z "$VPS_USER" ];    then echo "::error::VPS_USER secret is empty";    missing=1; fi
+          if [ -z "$VPS_SSH_KEY" ]; then echo "::error::VPS_SSH_KEY secret is empty"; missing=1; fi
+          if [ "$missing" = "1" ]; then exit 1; fi
+          if ! printf '%s' "$VPS_SSH_KEY" | head -n1 | grep -q "BEGIN .*PRIVATE KEY"; then
+            echo "::error::VPS_SSH_KEY does not start with '-----BEGIN ... PRIVATE KEY-----'."
+            exit 1
+          fi
+          echo "All required secrets are present."
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          command_timeout: 15m
+          script_stop: true
+          script: |
+            set -euo pipefail
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile     # explicitly tell it where the Dockerfile is
-          push: true
-          tags: josephthe313/ai-chatbot:latest
+            # ── CONFIGURE HERE ────────────────────────────────────────────────
+            PROJECT_DIR="/docker/ai-chatbot"        # e.g. /docker/myapp
+            REPO_URL="https://github.com/AI-chatbot.git"  # e.g. josephrotramel-313/MyApp.git
+            # ─────────────────────────────────────────────────────────────────
+
+            echo "==> Deploying to $PROJECT_DIR"
+            mkdir -p "$PROJECT_DIR"
+            cd "$PROJECT_DIR"
+
+            if [ ! -d ".git" ]; then
+              echo "==> Initializing git repo in $PROJECT_DIR for the first time..."
+              git init -b main
+              git remote add origin "$REPO_URL"
+              echo "==> Git initialized"
+            fi
+
+            echo "==> Commit before update: $(git rev-parse --short HEAD 2>/dev/null || echo 'none')"
+
+            echo "==> Fetching latest main"
+            git fetch --prune origin main
+            git reset --hard origin/main
+
+            echo "==> Commit after update: $(git rev-parse --short HEAD)"
+
+            echo "==> Stopping existing containers"
+            docker compose down
+
+            echo "==> Rebuilding images (no cache)"
+            docker compose build --no-cache
+
+            echo "==> Starting containers"
+            docker compose up -d
+
+            echo "==> Container status:"
+            docker compose ps
+
+            echo "==> Pruning dangling images"
+            docker image prune -f
+
+            echo "==> Deploy complete"
+
+      - name: Smoke test https://<<<DOMAIN>>>            # e.g. https://myapp.com
+        run: |
+          set -euo pipefail
+
+          echo "Waiting 15s for Traefik to route to the new containers..."
+          sleep 15
+
+          max_attempts=10
+          for attempt in $(seq 1 "$max_attempts"); do
+            echo "Attempt $attempt/$max_attempts: curling https://<<<DOMAIN>>>"
+            status=$(curl -sS -o /dev/null -w "%{http_code}" -L --max-time 20 https://<<<DOMAIN>>> || echo "000")
+            echo "  -> HTTP $status"
+            if [[ "$status" =~ ^[23][0-9][0-9]$ ]]; then
+              echo "Site is up."
+              exit 0
+            fi
+            sleep 10
+          done
+
+          echo "Site did not return a 2xx/3xx after $max_attempts attempts."
+          exit 1
+
+      - name: Deploy summary
+        if: always()
+        run: |
+          {
+            echo "### Deploy summary"
+            echo ""
+            echo "- **Project dir:** \`$PROJECT_DIR\`"
+            echo "- **Branch:** \`${{ github.ref_name }}\`"
+            echo "- **Commit:** \`${{ github.sha }}\`"
+            echo "- **Triggered by:** ${{ github.actor }}"
+            echo "- **Result:** ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"

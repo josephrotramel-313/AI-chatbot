@@ -8,3 +8,19 @@ services:
       - .env
     environment:
       - PORT=3000
+    networks:
+      - app-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=netcoreai_app-network"
+      - "traefik.http.routers.ai-chatbot.rule=Host(`ai-chatbot.netcoreai.tech`)"
+      - "traefik.http.routers.ai-chatbot.entrypoints=websecure"
+      - "traefik.http.routers.ai-chatbot.tls=true"
+      - "traefik.http.routers.ai-chatbot.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.ai-chatbot.service=ai-chatbot-service"
+      - "traefik.http.services.ai-chatbot-service.loadbalancer.server.port=3000"
+
+networks:
+  app-network:
+    external: true
+    name: netcoreai_app-network
